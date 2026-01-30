@@ -1,0 +1,88 @@
+[
+  {
+    "stepTitle": "初始配置文件，如已存在，自动跳过",
+    "items": [
+      {
+        "type": "text",
+        "field": "bt_username",
+        "label": "用户名",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入内容"
+          }
+        ],
+        "options": [],
+        "initValue": ""
+      },
+      {
+        "type": "text",
+        "field": "bt_password",
+        "label": "密码",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入内容"
+          }
+        ],
+        "options": [],
+        "initValue": ""
+      },
+      {
+        "type": "text",
+        "field": "bt_port",
+        "label": "WEBUI端口",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入内容"
+          }
+        ],
+        "options": [],
+        "initValue": "6780"
+      }
+    ]
+  },
+  {
+    "stepTitle": "安装运行必需文件",
+    "items": [
+      {
+        "type": "text",
+        "field": "bt_url",
+        "label": "请前往官网下载相应架构的最新deb安装包",
+        "rules": [],
+        "options": [],
+        "initValue": "https://download.bitcomet.com/linux/"
+      }
+    ]
+  },
+  {
+    "stepTitle": "安装提示",
+    "items": [
+      {
+        "type": "tips",
+        "field": "wizard_default",
+        "label": "",
+        "rules": [],
+        "options": [],
+        "helpText": "看应用介绍！看应用介绍！看应用介绍！"
+      },
+      {
+        "type": "tips",
+        "field": "wizard_default",
+        "label": "",
+        "rules": [],
+        "options": [],
+        "helpText": "安装完成不要立即启动！安装完成不要立即启动！安装完成不要立即启动！"
+      },
+      {
+        "type": "tips",
+        "field": "wizard_default",
+        "label": "",
+        "rules": [],
+        "options": [],
+        "helpText": "下载目录前往webui修改，并在应用设置添加读写权限"
+      }
+    ]
+  }
+]

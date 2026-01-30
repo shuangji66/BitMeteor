@@ -1,0 +1,18 @@
+{
+  ".url": {
+    "BitMeteor.Application": {
+      "noDisplay": false,
+      "allUsers": true,
+      "fileTypes": [],
+      "control": {
+        "accessPerm": "readonly"
+      },
+      "title": "BitMeteor",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "http",
+      "port": "${bt_port}",
+      "url": ""
+    }
+  }
+}

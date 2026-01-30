@@ -1,0 +1,80 @@
+[
+  {
+    "stepTitle": "升级及重置配置，用过记得关闭开关",
+    "items": [
+      {
+        "type": "radio",
+        "field": "bt_upgrade",
+        "label": "升级开关",
+        "rules": [],
+        "options": [
+          {
+            "label": "升级",
+            "value": "on"
+          },
+          {
+            "label": "不升级",
+            "value": "off"
+          }
+        ],
+        "initValue": "off"
+      },
+      {
+        "type": "radio",
+        "field": "config_grade",
+        "label": "配置重置开关",
+        "rules": [],
+        "options": [
+          {
+            "label": "重置",
+            "value": "on"
+          },
+          {
+            "label": "不重置",
+            "value": "off"
+          }
+        ],
+        "initValue": "off"
+      },
+      {
+        "type": "text",
+        "field": "bt_username",
+        "label": "用户名",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入内容"
+          }
+        ],
+        "options": [],
+        "initValue": ""
+      },
+      {
+        "type": "text",
+        "field": "bt_password",
+        "label": "密码",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入内容"
+          }
+        ],
+        "options": [],
+        "initValue": ""
+      },
+      {
+        "type": "text",
+        "field": "bt_port",
+        "label": "WEBUI端口",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入内容"
+          }
+        ],
+        "options": [],
+        "initValue": "6780"
+      }
+    ]
+  }
+]

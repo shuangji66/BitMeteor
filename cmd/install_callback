@@ -1,0 +1,19 @@
+#!/bin/bash
+LOG_FILE="${TRIM_DATA_SHARE_PATHS%%:*}/info.log"
+#=== 初始化BitComet.xml ===
+CONFIG_TEMPLATE="${TRIM_APPDEST}/template/BitComet.tpl"
+CONFIG_FILE="${TRIM_DATA_SHARE_PATHS%%:*}/data/BitComet.xml"
+
+#--- 检查配置文件是否已存在 ---
+if [ -f "$CONFIG_FILE" ]; then
+    echo "配置文件已存在，跳过生成" >> ${LOG_FILE}
+else
+    echo "配置文件不存在，正在生成" >> ${LOG_FILE}
+    sed \
+      -e "s|\${BT_USERNAME}|$bt_username|g" \
+      -e "s|\${BT_PASSWORD}|$bt_password|g" \
+      -e "s|\${BT_PORT}|$bt_port|g" \
+      ${CONFIG_TEMPLATE} > ${CONFIG_FILE}
+fi
+
+exit 0

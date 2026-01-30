@@ -1,0 +1,38 @@
+{
+  "data-share": {
+    "shares": [
+      {
+        "name": "BitMeteor",
+        "permission": {
+          "rw": [
+            "BitMeteor"
+          ]
+        }
+      },
+      {
+        "name": "BitMeteor/app",
+        "permission": {
+          "rw": [
+            "BitMeteor"
+          ]
+        }
+      },
+      {
+        "name": "BitMeteor/data",
+        "permission": {
+          "rw": [
+            "BitMeteor"
+          ]
+        }
+      },
+      {
+        "name": "BitMeteor/Download",
+        "permission": {
+          "rw": [
+            "BitMeteor"
+          ]
+        }
+      }
+    ]
+  }
+}
