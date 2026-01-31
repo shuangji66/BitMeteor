@@ -22,15 +22,15 @@
         ],
         "options": [
           {
-            "label": "保留数据(重装可能报错)- 将来重新安装时可恢复",
+            "label": "保留数据- 将来重新安装时可恢复",
             "value": "keep"
           },
           {
-            "label": "删除所有数据(推荐) - 此操作不可恢复！",
+            "label": "删除所有数据 - 此操作不可恢复！",
             "value": "delete"
           }
         ],
-        "initValue": "delete"
+        "initValue": "keep"
       },
       {
         "type": "tips",

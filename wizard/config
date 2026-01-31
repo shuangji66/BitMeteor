@@ -1,71 +1,28 @@
 [
   {
-    "stepTitle": "升级及重置配置，用过记得关闭开关",
+    "stepTitle": "webui设置",
     "items": [
       {
         "type": "radio",
-        "field": "bt_upgrade",
-        "label": "升级开关",
+        "field": "bt_url",
+        "label": "webui入口",
         "rules": [],
         "options": [
           {
-            "label": "升级",
-            "value": "on"
+            "label": "文字UI",
+            "value": "panel/"
           },
           {
-            "label": "不升级",
-            "value": "off"
+            "label": "图形UI",
+            "value": "webui/"
           }
         ],
-        "initValue": "off"
-      },
-      {
-        "type": "radio",
-        "field": "config_grade",
-        "label": "配置重置开关",
-        "rules": [],
-        "options": [
-          {
-            "label": "重置",
-            "value": "on"
-          },
-          {
-            "label": "不重置",
-            "value": "off"
-          }
-        ],
-        "initValue": "off"
-      },
-      {
-        "type": "text",
-        "field": "bt_username",
-        "label": "用户名",
-        "rules": [
-          {
-            "required": true,
-            "message": "请输入内容"
-          }
-        ],
-        "options": [],
-        "initValue": ""
-      },
-      {
-        "type": "text",
-        "field": "bt_password",
-        "label": "密码",
-        "rules": [
-          {
-            "required": true,
-            "message": "请输入内容"
-          }
-        ],
-        "options": [],
-        "initValue": ""
+        "initValue": "webui/"
       },
       {
         "type": "text",
         "field": "bt_port",
-        "label": "WEBUI端口",
+        "label": "webui端口",
         "rules": [
           {
             "required": true,
@@ -73,7 +30,8 @@
           }
         ],
         "options": [],
-        "initValue": "6780"
+        "initValue": "6780",
+        "helpText": "先在配置文件或webui修改再改这里"
       }
     ]
   }

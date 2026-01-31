@@ -40,6 +40,23 @@
         ],
         "options": [],
         "initValue": "6780"
+      },
+      {
+        "type": "radio",
+        "field": "bt_url",
+        "label": "webui入口",
+        "rules": [],
+        "options": [
+          {
+            "label": "图形UI",
+            "value": "webui/"
+          },
+          {
+            "label": "文字UI",
+            "value": "panel/"
+          }
+        ],
+        "initValue": "webui/"
       }
     ]
   },
@@ -48,7 +65,7 @@
     "items": [
       {
         "type": "text",
-        "field": "bt_url",
+        "field": "bt_deb",
         "label": "请前往官网下载相应架构的最新deb安装包",
         "rules": [],
         "options": [],
@@ -65,15 +82,7 @@
         "label": "",
         "rules": [],
         "options": [],
-        "helpText": "看应用介绍！看应用介绍！看应用介绍！"
-      },
-      {
-        "type": "tips",
-        "field": "wizard_default",
-        "label": "",
-        "rules": [],
-        "options": [],
-        "helpText": "安装完成不要立即启动！安装完成不要立即启动！安装完成不要立即启动！"
+        "helpText": "看应用介绍安装！"
       },
       {
         "type": "tips",

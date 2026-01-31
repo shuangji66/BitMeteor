@@ -9,10 +9,10 @@
       },
       "title": "BitMeteor",
       "icon": "images/icon_{0}.png",
-      "type": "iframe",
+      "type": "url",
       "protocol": "http",
       "port": "${bt_port}",
-      "url": ""
+      "url": "${bt_url}"
     }
   }
 }

@@ -1,17 +1,73 @@
 #!/bin/bash
+#--- 运行文件定义 ---
 LOG_FILE="${TRIM_DATA_SHARE_PATHS%%:*}/info.log"
 PID_FILE="${TRIM_PKGVAR}/app.pid"
+
+#--- 检查进程函数 ---
+check_process() {
+    local pid=$1
+    if [ -n "$pid" ] && kill -0 "${pid}" 2>/dev/null; then
+        return 0  # process exist
+    else
+        return 1  # process not exist
+    fi
+}
+
+#--- 状态检查函数 ---
+status() {
+    if [ -f "${PID_FILE}" ]; then
+        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        if check_process "${pid}"; then
+            return 0 # Running
+        else
+            # Process is not running but pidfile exists - clean it up
+            rm -f "${PID_FILE}"
+            log_msg "清理失效的 PID 文件: ${PID_FILE}"
+        fi
+    fi
+    return 1 # Not Running
+}
+
+#--- 在脚本开始处检查参数，阻断定期检测 ---
+if [ "$1" = "status" ]; then
+    # 对于 status 调用，只执行快速的状态检查
+    if status; then
+        exit 0
+    else
+        exit 3
+    fi
+fi
+
+#--- 安装文件处理定义 ---
 BITCOMET_FILE="${TRIM_APPDEST}/bin/bitcometd"
 WEBUI_DIR="${TRIM_APPDEST}/share/webui"
 IP_DIR="${TRIM_APPDEST}/share/ip2location"
+APP_DIR="${TRIM_DATA_SHARE_PATHS%%:*}/app"
+TMP_DIR="${TRIM_PKGTMP}/tmp"
 
+#--- 文件夹软链接定义 ----
+USER_SHARE="${TRIM_APPDEST}/share"
+USER_CONFIG="${TRIM_DATA_SHARE_PATHS%%:*}/data"
+USER_DOWNLOAD="${TRIM_DATA_SHARE_PATHS%%:*}/Download"
+BITCOMET_SHARE="/usr/share/bitcomet"
+BITCOMET_CONFIG="/root/.config/BitComet"
+BITCOMET_DOWNLOAD="/root/Downloads"
+
+#--- 版本文件定义 ---
+CURRENT_VERSION_FILE="${TRIM_APPDEST}/current_version"
+
+#--- 启动命令 ---
 CMD="${TRIM_APPDEST}/bin/bitcometd"
 
+#--- 日志函数 ---
 log_msg() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> ${LOG_FILE}
 }
 
-# --- 从文件名提取版本号的函数 ---
+#--- 初始化变量 ---
+cleanup_needed=false
+
+#--- 文件名提取版本号函数 ---
 extract_version_from_filename() {
     local filename="$1"
     # 提取 BitComet-<version>-<arch>.deb 中的 <version>
@@ -19,27 +75,106 @@ extract_version_from_filename() {
     echo "$version"
 }
 
-#=== 启动前检查必需文件 ===
-if [ ! -f "$BITCOMET_FILE" ] || [ ! -d "$WEBUI_DIR" ] || [ ! -d "$IP_DIR" ]; then
-    echo "缺少运行必需文件，进行安装" >> ${LOG_FILE}
+#--- 版本比较函数 ---
+compare_versions() {
+    # 返回值：0 表示相等，1 表示 $1 > $2, 2 表示 $1 < $2
+    local ver_a="$1"
+    local ver_b="$2"
+    # 使用 printf 和管道将两个版本号传递给 sort -V
+    sorted_output=$(printf '%s\n%s' "$ver_a" "$ver_b" | sort -V)
+    local first_line=$(echo "$sorted_output" | head -n 1)
+    local last_line=$(echo "$sorted_output" | tail -n 1)
 
-    #=== 释放运行必需文件 ===
-    #--- 检测并复制deb安装包 ---
-    mkdir -p ${TRIM_APPDEST}/tmp
-    mkdir -p ${TRIM_APPDEST}/tmp/extracted
-    APP_DIR="${TRIM_DATA_SHARE_PATHS%%:*}/app"
-    TMP_DIR="${TRIM_APPDEST}/tmp"
-    DEB_PATH=$(find "$APP_DIR" -maxdepth 1 -type f -name "BitComet-*-*.deb" -print -quit)
-
-    if [ -z "$DEB_PATH" ]; then
-       echo "错误：在$APP_DIR中未找到匹配 'BitComet-xxxx-xxxx.deb' 格式的文件。" >> ${LOG_FILE}
-       echo "错误：在$APP_DIR中未找到匹配 'BitComet-xxxx-xxxx.deb' 格式的文件。" >&2
-       exit 1
+    if [[ "$first_line" == "$last_line" ]]; then
+        return 0 # 相等
+    elif [[ "$first_line" == "$ver_b" ]]; then
+        return 1 # ver_a > ver_b
+    else
+        return 2 # ver_a < ver_b
     fi
-    cp "$DEB_PATH" "$TMP_DIR/bitcomet.deb"
+}
 
-    #--- 获取安装文件的版本号 ---
-    CURRENT_VERSION_FILE="${TRIM_APPDEST}/current_version"
+# --- DEB安装包处理函数 ---
+install_or_update_from_deb() {
+    local deb_path="$1"
+    local target_version="$2"
+
+    log_msg "开始从 $deb_path 安装或更新到版本 $target_version"
+
+    #=== 从安装包释放运行必需文件 ===
+    #--- 创建临时文件夹 ---
+    mkdir -p ${TRIM_PKGTMP}/tmp
+    mkdir -p ${TMP_DIR}/extracted
+    # cleanup_needed should be set by the caller if necessary
+    # This function just handles the extraction part.
+
+    #--- 复制安装包至临时目录 ---
+    cp "$deb_path" "$TMP_DIR/bitcomet.deb"
+
+    #--- 解压安装包 ---
+    log_msg "正在解压 $TMP_DIR/bitcomet.deb 到 $TMP_DIR/extracted ..."
+    if command -v dpkg-deb &> /dev/null; then
+        log_msg "使用 dpkg-deb 解压..."
+        dpkg-deb -x "$TMP_DIR/bitcomet.deb" "$TMP_DIR/extracted/"
+        log_msg "解压成功"
+    else
+        log_msg "错误: dpkg-deb 命令不可用，无法解压。"
+        exit 1
+    fi
+
+    #--- 提取bitcometd ---
+    BITCOMETD_PATH=$(find "$TMP_DIR/extracted" -type f -name "bitcometd" -print -quit)
+    if [ -n "$BITCOMETD_PATH" ]; then
+        cp "$BITCOMETD_PATH" "$BITCOMET_FILE"
+        log_msg "已复制 bitcometd"
+    else
+        log_msg "错误：在解压结果中未找到 'bitcometd' 文件。"
+        exit 1
+    fi
+
+    #--- 提取webui文件夹 ---
+    WEBUI_PATH=$(find "$TMP_DIR/extracted" -type d -name "webui" -print -quit)
+    if [ -n "$WEBUI_PATH" ]; then
+      # 如果目标目录已存在，则先删除它
+      if [ -d "$WEBUI_DIR" ]; then
+          rm -rf "$WEBUI_DIR"
+          log_msg "已删除旧的目标目录。"
+      fi
+      # 现在复制，这样源目录的内容会成为目标目录的内容
+      cp -r "$WEBUI_PATH" "$WEBUI_DIR"
+      log_msg "已复制 webui 目录"
+    else
+      log_msg "错误：在解压结果中未找到 'webui' 目录。"
+      exit 1
+    fi
+
+    #--- 提取ip2location文件夹 ---
+    IP_PATH=$(find "$TMP_DIR/extracted" -type d -name "ip2location" -print -quit)
+    if [ -n "$IP_PATH" ]; then
+      # 如果目标目录已存在，则先删除它
+      if [ -d "$IP_DIR" ]; then
+          rm -rf "$IP_DIR"
+          log_msg "已删除旧的目标目录。"
+      fi
+      # 现在复制，这样源目录的内容会成为目标目录的内容
+      cp -r "$IP_PATH" "$IP_DIR"
+      log_msg "已复制 ip2location 目录"
+    else
+      log_msg "错误：在解压结果中未找到 'ip2location' 目录。"
+      exit 1
+    fi
+
+    # 更新版本文件
+    echo "$target_version" > "$CURRENT_VERSION_FILE"
+    log_msg "已更新版本文件为: $target_version"
+}
+
+#=== 启动前检查必需文件 ===
+DEB_PATH=$(find "$APP_DIR" -maxdepth 1 -type f -name "BitComet-*-*.deb" -print -quit)
+
+if [ -n "$DEB_PATH" ]; then
+    # 情况 A: APP_DIR 下找到了安装包
+    log_msg "在 $APP_DIR 下找到安装包: $DEB_PATH"
     FOUND_FILENAME=$(basename "$DEB_PATH")
     FOUND_VERSION=$(extract_version_from_filename "$FOUND_FILENAME")
 
@@ -48,107 +183,169 @@ if [ ! -f "$BITCOMET_FILE" ] || [ ! -d "$WEBUI_DIR" ] || [ ! -d "$IP_DIR" ]; the
         exit 1
     fi
 
-    log_msg "提取到的版本号: $FOUND_VERSION"
-    echo "$FOUND_VERSION" > "$CURRENT_VERSION_FILE"
+    log_msg "从安装包提取到的版本号: $FOUND_VERSION"
 
-    #--- 解压deb安装包 ---
-    echo "正在解压 $TMP_DIR/bitcomet.deb 到 $TMP_DIR/extracted ..." >> ${LOG_FILE}
-    if command -v dpkg-deb &> /dev/null; then
-        echo "使用 dpkg-deb 解压..." >> ${LOG_FILE}
-        dpkg-deb -x "$TMP_DIR/bitcomet.deb" "$TMP_DIR/extracted/"
-        echo "解压成功" >> ${LOG_FILE}
+    # --- 读取当前版本 ---
+    if [ -f "$CURRENT_VERSION_FILE" ]; then
+        CURRENT_VERSION=$(cat "$CURRENT_VERSION_FILE")
+        log_msg "当前记录的版本号: '$CURRENT_VERSION'"
     else
-        echo "解压失败" >> ${LOG_FILE}
-        exit 1
-    fi
-    #--- 提取bitcometd ---
-    BIN_DIR="${TRIM_APPDEST}/bin"
-    BITCOMETD_PATH=$(find "$TMP_DIR/extracted" -type f -name "bitcometd" -print -quit)
-
-    if [ -n "$BITCOMETD_PATH" ]; then
-        cp "$BITCOMETD_PATH" "$BIN_DIR/bitcometd"
-    else
-        echo "在 $TMP_DIR 及其子目录中未找到名为 'bitcometd' 的文件。" >> ${LOG_FILE}
-        echo "在 $TMP_DIR 及其子目录中未找到名为 'bitcometd' 的文件。" >&2
-        exit 1
+        CURRENT_VERSION=""
+        log_msg "当前版本文件 $CURRENT_VERSION_FILE 不存在，执行初次安装。"
     fi
 
-    #--- 提取webui和ip2location文件夹
-    WEBUI_PATH=$(find "$TMP_DIR/extracted" -type d -name "webui" -print -quit)
+    # --- 检查运行文件是否完整 (仅在版本文件存在时检查) ---
+    if [ -n "$CURRENT_VERSION" ]; then
+        log_msg "版本文件存在，检查运行文件完整性..."
+        if [ ! -f "$BITCOMET_FILE" ] || [ ! -d "$WEBUI_DIR" ] || [ ! -d "$IP_DIR" ]; then
+            log_msg "警告：运行文件不完整。"
+            # 对于不完整的文件，需要根据版本号决定是安装还是报错
+            compare_versions "$FOUND_VERSION" "$CURRENT_VERSION"
+            comparison_result=$?
 
-    if [ -n "$WEBUI_PATH" ]; then
-        cp -r "$WEBUI_PATH" "$TRIM_APPDEST/share/webui"
+            if [ $comparison_result -eq 1 ] || [ $comparison_result -eq 0 ]; then
+                # 安装包版本 >= 当前版本 (1: >, 0: ==)，执行安装/覆盖
+                if [ $comparison_result -eq 1 ]; then
+                    log_msg "发现更高版本 $FOUND_VERSION >= '$CURRENT_VERSION'，准备执行安装以修复不完整的文件..."
+                else
+                    log_msg "找到的版本 $FOUND_VERSION 与当前版本 '$CURRENT_VERSION' 相同，准备执行覆盖安装以修复不完整的文件..."
+                fi
+                install_or_update_from_deb "$DEB_PATH" "$FOUND_VERSION"
+                cleanup_needed=true # 标记需要清理
+
+            else
+                # 安装包版本 < 当前版本 (comparison_result == 2)，中止并报错
+                log_msg "错误：运行文件不完整，且安装包版本 $FOUND_VERSION 小于当前记录版本 '$CURRENT_VERSION'。请添加最新版本安装包。"
+                exit 1
+            fi
+        else
+            # 运行文件完整，按照原来的逻辑比较版本号
+            log_msg "所有必需的运行文件均存在。"
+            compare_versions "$FOUND_VERSION" "$CURRENT_VERSION"
+            comparison_result=$?
+
+            if [ $comparison_result -eq 1 ]; then
+                # 安装包版本 > 当前版本 (1: >)，需要安装
+                log_msg "发现更高版本 $FOUND_VERSION > '$CURRENT_VERSION'，准备执行安装..."
+                install_or_update_from_deb "$DEB_PATH" "$FOUND_VERSION"
+                cleanup_needed=true # 标记需要清理
+
+            elif [ $comparison_result -eq 0 ]; then
+                # 安装包版本 = 当前版本 (0: ==)，跳过安装
+                log_msg "找到的版本 $FOUND_VERSION 与当前版本 '$CURRENT_VERSION' 相同，跳过安装。"
+                cleanup_needed=false # 标记无需清理
+
+            else
+                # 安装包版本 < 当前版本 (comparison_result == 2)，跳过安装
+                log_msg "安装包版本 $FOUND_VERSION 小于当前记录版本 '$CURRENT_VERSION'，跳过安装。"
+                cleanup_needed=false # 标记无需清理
+            fi
+        fi
     else
-        echo "在 $TMP_DIR 及其子目录中未找到名为 'webui' 的目录。" >> ${LOG_FILE}
-        echo "在 $TMP_DIR 及其子目录中未找到名为 'webui' 的目录。" >&2
-        exit 1
+        # --- 版本文件不存在，执行初次安装 ---
+        log_msg "版本文件不存在，执行初次安装。"
+        install_or_update_from_deb "$DEB_PATH" "$FOUND_VERSION"
+        cleanup_needed=true # 标记需要清理
     fi
 
-    IP_PATH=$(find "$TMP_DIR/extracted" -type d -name "ip2location" -print -quit)
-
-    if [ -n "$IP_PATH" ]; then
-        cp -r "$IP_PATH" "$TRIM_APPDEST/share/ip2location"
-    else
-        echo "在 $TMP_DIR 及其子目录中未找到名为 'ip2location' 的目录。" >> ${LOG_FILE}
-        echo "在 $TMP_DIR 及其子目录中未找到名为 'ip2location' 的目录。" >&2
-        exit 1
-    fi
 else
-    echo "所有必需的文件和目录均已存在，继续启动" >> ${LOG_FILE}
+    # 情况 B: APP_DIR 下没有找到安装包
+    log_msg "在 $APP_DIR 下未找到 'BitComet-*.deb' 格式的安装包。"
+
+    if [ -f "$CURRENT_VERSION_FILE" ] && [ -s "$CURRENT_VERSION_FILE" ]; then
+        # 版本文件存在且非空
+        CURRENT_VERSION=$(cat "$CURRENT_VERSION_FILE")
+        log_msg "检测到已记录的版本号: '$CURRENT_VERSION'"
+
+        # 检查所有必需文件是否存在
+        if [ -f "$BITCOMET_FILE" ] && [ -d "$WEBUI_DIR" ] && [ -d "$IP_DIR" ]; then
+            log_msg "所有必需的运行文件均存在，继续启动。"
+            cleanup_needed=false # 标记无需清理
+        else
+            log_msg "错误：运行文件不完整 (bitcometd: [$( [ -f "$BITCOMET_FILE" ] && echo '存在' || echo '缺失' )], webui: [$( [ -d "$WEBUI_DIR" ] && echo '存在' || echo '缺失' )], ip2location: [$( [ -d "$IP_DIR" ] && echo '存在' || echo '缺失' )])。请添加安装包重新安装或手动安装文件。"
+            exit 1
+        fi
+    else
+        # 版本文件不存在或为空
+        log_msg "错误：程序未安装。请添加安装包。"
+        exit 1
+    fi
 fi
 
-#--- 清空临时文件 ---
-rm -f ${DEB_PATH}
-rm -rf ${TMP_DIR}
+#--- 清空临时文件和安装包 ---
+if [ "$cleanup_needed" = true ]; then
+    log_msg "清理临时文件和安装包..."
+    rm -f ${DEB_PATH} # 删除刚刚使用的 deb 包
+    rm -rf ${TMP_DIR} # 删除整个 tmp 目录
+    log_msg "临时文件和安装包已清理。"
+else
+    log_msg "无需清理临时文件。"
+fi
 
+#--- 启动函数 ---
 start_process() {
     if status; then
         return 0
     fi
 
-    log_msg "创建软链接并启动bitcometd"
-    #--- 创建文件夹软链接 ----
-    USER_SHARE="${TRIM_APPDEST}/share"
-    USER_CONFIG="${TRIM_DATA_SHARE_PATHS%%:*}/data"
-    USER_DOWNLOAD="${TRIM_DATA_SHARE_PATHS%%:*}/Download"
-    BITCOMET_SHARE="/usr/share/bitcomet"
-    BITCOMET_CONFIG="/root/.config/BitComet"
-    BITCOMET_DOWNLOAD="/root/Downloads"
+    log_msg "启动bitcometd前检查日志文件大小"
 
-    # 检查并清理目标路径上的旧软链接
+    # --- 检测并清理日志文件 ---
+    if [ -f "$LOG_FILE" ]; then
+        # 获取日志文件大小（以字节为单位）
+        LOG_SIZE_BYTES=$(stat -c %s "$LOG_FILE" 2>/dev/null)
+        # 检查 stat 命令是否成功执行
+        if [ $? -eq 0 ]; then
+            if [ $LOG_SIZE_BYTES -gt 102400 ]; then
+                log_msg "日志文件 $LOG_FILE 大小 ($LOG_SIZE_BYTES bytes) 超过 100KB，正在删除..."
+                rm -f "$LOG_FILE"
+                log_msg "日志文件已删除。"
+            else
+                log_msg "日志文件 $LOG_FILE 大小为 $LOG_SIZE_BYTES bytes，未超过 100KB，继续启动。"
+            fi
+        else
+            log_msg "警告：无法获取日志文件 $LOG_FILE 的大小信息，stat 命令执行失败。"
+        fi
+    else
+        log_msg "日志文件 $LOG_FILE 不存在，继续启动。"
+    fi
+
+    log_msg "创建软链接并启动bitcometd"
+
+    #--- 检查并清理"$BITCOMET_SHARE"的旧软链接 ---
     if [ -L "$BITCOMET_SHARE" ]; then
-        echo "发现并删除已存在的软链接: $BITCOMET_SHARE" >> ${LOG_FILE}
+        log_msg "发现并删除已存在的软链接: $BITCOMET_SHARE"
         rm -f "$BITCOMET_SHARE"
     fi
     if ln -s "$USER_SHARE" "$BITCOMET_SHARE"; then
-      echo "成功创建$BITCOMET_SHARE" >> ${LOG_FILE}
+        log_msg "成功创建$BITCOMET_SHARE"
     else
-      echo "错误: 创建$BITCOMET_SHARE失败 (退出码: $?)。请检查权限和父目录是否存在。" >> ${LOG_FILE}
-      exit 1
+        log_msg "错误: 创建$BITCOMET_SHARE失败。请检查权限和父目录是否存在。"
+        exit 1
     fi
 
-    # 检查并清理目标路径上的旧软链接
+    # 检查并清理"$BITCOMET_DOWNLOAD"的旧软链接
     if [ -L "$BITCOMET_DOWNLOAD" ]; then
-        echo "发现并删除已存在的软链接: $BITCOMET_DOWNLOAD" >> ${LOG_FILE}
+        log_msg "发现并删除已存在的软链接: $BITCOMET_DOWNLOAD"
         rm -f "$BITCOMET_DOWNLOAD"
     fi
     if ln -s "$USER_DOWNLOAD" "$BITCOMET_DOWNLOAD"; then
-      echo "成功创建$BITCOMET_DOWNLOAD" >> ${LOG_FILE}
+        log_msg "成功创建$BITCOMET_DOWNLOAD"
     else
-      echo "错误: 创建$BITCOMET_DOWNLOAD失败 (退出码: $?)。请检查权限和父目录是否存在。" >> ${LOG_FILE}
-      exit 1
+        log_msg "错误: 创建$BITCOMET_DOWNLOAD失败。请检查权限和父目录是否存在。"
+        exit 1
     fi
 
     # 检查并清理目标路径上的旧软链接
     if [ -L "$BITCOMET_CONFIG" ]; then
-        echo "发现并删除已存在的软链接: $BITCOMET_CONFIG" >> ${LOG_FILE}
+        log_msg "发现并删除已存在的软链接: $BITCOMET_CONFIG"
         rm -f "$BITCOMET_CONFIG"
     fi
     if ln -s "$USER_CONFIG" "$BITCOMET_CONFIG"; then
-      echo "成功创建$BITCOMET_CONFIG" >> ${LOG_FILE}
+        log_msg "成功创建$BITCOMET_CONFIG"
     else
-      echo "错误: 创建$BITCOMET_CONFIG失败 (退出码: $?)。请检查权限和父目录是否存在。" >> ${LOG_FILE}
-      exit 1
+        log_msg "错误: 创建$BITCOMET_CONFIG失败。请检查权限和父目录是否存在。"
+        exit 1
     fi
 
     # run cmd to start process
@@ -193,67 +390,45 @@ stop_process() {
             log_msg "process killed... "
         fi
     fi
+
     # 检查并删除第一个软链接
     if [ -L "${BITCOMET_SHARE}" ]; then
         if [ "$(readlink "${BITCOMET_SHARE}")" = "${USER_SHARE}" ]; then
-            echo "发现并删除软链接: ${BITCOMET_SHARE} -> $(readlink "${BITCOMET_SHARE}")"
+            log_msg "发现并删除软链接: ${BITCOMET_SHARE} -> $(readlink "${BITCOMET_SHARE}")"
            rm -f "${BITCOMET_SHARE}"
         else
-            echo "警告: ${BITCOMET_SHARE} 存在但不是由本脚本创建的 (目标: $(readlink "${BITCOMET_SHARE}")). 跳过。"
+            log_msg "警告: ${BITCOMET_SHARE} 存在但不是由本脚本创建的 (目标: $(readlink "${BITCOMET_SHARE}")). 跳过。"
         fi
     else
-        echo "未找到软链接: ${BITCOMET_SHARE} (或它不是一个链接)"
+        log_msg "未找到软链接: ${BITCOMET_SHARE} (或它不是一个链接)"
     fi
 
     # 检查并删除第二个软链接
     if [ -L "${BITCOMET_CONFIG}" ]; then
         if [ "$(readlink "${BITCOMET_CONFIG}")" = "${USER_CONFIG}" ]; then
-            echo "发现并删除软链接: ${BITCOMET_CONFIG} -> $(readlink "${BITCOMET_CONFIG}")"
+            log_msg "发现并删除软链接: ${BITCOMET_CONFIG} -> $(readlink "${BITCOMET_CONFIG}")"
             rm -f "${BITCOMET_CONFIG}"
         else
-            echo "警告: ${BITCOMET_CONFIG} 存在但不是由本脚本创建的 (目标: $(readlink "${BITCOMET_CONFIG}")). 跳过。"
+            log_msg "警告: ${BITCOMET_CONFIG} 存在但不是由本脚本创建的 (目标: $(readlink "${BITCOMET_CONFIG}")). 跳过。"
         fi
     else
-        echo "未找到软链接: ${BITCOMET_CONFIG} (或它不是一个链接)"
+        log_msg "未找到软链接: ${BITCOMET_CONFIG} (或它不是一个链接)"
     fi
 
     # 检查并删除第三个软链接
     if [ -L "${BITCOMET_DOWNLOAD}" ]; then
         if [ "$(readlink "${BITCOMET_DOWNLOAD}")" = "${USER_DOWNLOAD}" ]; then
-            echo "发现并删除软链接: ${BITCOMET_DOWNLOAD} -> $(readlink "${BITCOMET_DOWNLOAD}")"
+            log_msg "发现并删除软链接: ${BITCOMET_DOWNLOAD} -> $(readlink "${BITCOMET_DOWNLOAD}")"
             rm -f "${BITCOMET_DOWNLOAD}"
         else
-            echo "警告: ${BITCOMET_DOWNLOAD} 存在但不是由本脚本创建的 (目标: $(readlink "${BITCOMET_DOWNLOAD}")). 跳过。"
+            log_msg "警告: ${BITCOMET_DOWNLOAD} 存在但不是由本脚本创建的 (目标: $(readlink "${BITCOMET_DOWNLOAD}")). 跳过。"
         fi
     else
-        echo "未找到软链接: ${BITCOMET_DOWNLOAD} (或它不是一个链接)"
+        log_msg "未找到软链接: ${BITCOMET_DOWNLOAD} (或它不是一个链接)"
     fi
 
-    echo "停止进程并软链接清理完成。" >> ${LOG_FILE}
+    log_msg "已停止进程并清理软链接。"
     return 0
-}
-
-check_process() {
-    local pid=$1
-    if kill -0 "${pid}" 2>/dev/null; then
-        return 0  # process exist
-    else
-        return 1  # process not exist
-    fi
-}
-
-status() {
-    if [ -f "${PID_FILE}" ]; then
-        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
-        if check_process "${pid}"; then
-            return 0
-        else
-            # Process is not running but pidfile exists - clean it up
-            rm -f "${PID_FILE}"
-        fi    
-    fi
-
-    return 1
 }
 
 case $1 in

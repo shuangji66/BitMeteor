@@ -1,169 +1,19 @@
 #!/bin/bash
 LOG_FILE="${TRIM_DATA_SHARE_PATHS%%:*}/info.log"
-#---当前安装版本号文件----
-CURRENT_VERSION_FILE="${TRIM_APPDEST}/current_version"
 
 log_msg() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> ${LOG_FILE}
 }
 
-#--- 版本比较函数 ---
-compare_versions() {
-    # 返回值：0 表示相等，1 表示 $1 > $2, 2 表示 $1 < $2
-    local ver_a="$1"
-    local ver_b="$2"
-    # 使用 printf 和管道将两个版本号传递给 sort -V
-    sorted_output=$(printf '%s\n%s' "$ver_a" "$ver_b" | sort -V)
-    local first_line=$(echo "$sorted_output" | head -n 1)
-    local last_line=$(echo "$sorted_output" | tail -n 1)
+#=== 重置配置文件 ===
+CONFIG_TEMPLATE="${TRIM_APPDEST}/template/BitComet.tpl"
+CONFIG_FILE="${TRIM_DATA_SHARE_PATHS%%:*}/data/BitComet.xml"
 
-    if [[ "$first_line" == "$last_line" ]]; then
-        return 0 # 相等
-    elif [[ "$first_line" == "$ver_b" ]]; then
-        return 1 # ver_a > ver_b
-    else
-        return 2 # ver_a < ver_b
-    fi
-}
-
-# --- 从文件名提取版本号的函数 ---
-extract_version_from_filename() {
-    local filename="$1"
-    # 提取 BitComet-<version>-<arch>.deb 中的 <version>
-    local version=$(echo "$filename" | sed -n 's/^BitComet-\([^-]*\)-.*\.deb$/\1/p')
-    echo "$version"
-}
-
-# --- 检查 $upgrade 变量 ---
-if [ "$bt_upgrade" = "on" ]; then
-    log_msg "升级检查开启。"
-    # --- 查找最新的 .deb 文件 ---
-    APP_DIR="${TRIM_DATA_SHARE_PATHS%%:*}/app"
-    DEB_PATH=$(find "$APP_DIR" -maxdepth 1 -type f -name "BitComet-*-*.deb" -print -quit)
-
-    if [ -z "$DEB_PATH" ]; then
-        log_msg "错误：在$APP_DIR中未找到匹配 'BitComet-xxxx-xxxx.deb' 格式的文件。"
-        exit 1
-    fi
-
-    FOUND_FILENAME=$(basename "$DEB_PATH")
-    FOUND_VERSION=$(extract_version_from_filename "$FOUND_FILENAME")
-
-    if [ -z "$FOUND_VERSION" ]; then
-        log_msg "错误：无法从文件名 '$FOUND_FILENAME' 中提取版本号。"
-        exit 1
-    fi
-
-    log_msg "提取到的版本号: $FOUND_VERSION"
-
-    # --- 读取当前版本 ---
-    if [ -f "$CURRENT_VERSION_FILE" ]; then
-        CURRENT_VERSION=$(cat "$CURRENT_VERSION_FILE")
-        log_msg "当前记录的版本号: $CURRENT_VERSION"
-    else
-        # 如果版本文件不存在，可以假设当前版本为空或非常旧
-        CURRENT_VERSION=""
-        log_msg "当前版本文件 $CURRENT_VERSION_FILE 不存在，假设当前版本为空。"
-    fi
-
-    # --- 比较版本号 ---
-    compare_versions "$FOUND_VERSION" "$CURRENT_VERSION"
-    comparison_result=$?
-
-    if [ $comparison_result -eq 1 ] || [ $comparison_result -eq 0 ]; then
-        if [ $comparison_result -eq 1 ]; then
-            log_msg "发现更高版本$FOUND_VERSION > $CURRENT_VERSION，准备执行升级..."
-        else
-            log_msg "找到的版本$FOUND_VERSION 与当前版本相同，准备执行覆盖安装..."
-        fi
-
-        # --- 释放运行必需文件 ---
-        mkdir -p ${TRIM_APPDEST}/tmp
-        mkdir -p ${TRIM_APPDEST}/tmp/extracted
-        TMP_DIR="${TRIM_APPDEST}/tmp"
-        cp "$DEB_PATH" "$TMP_DIR/bitcomet.deb"
-
-        #--- 解压deb安装包 ---
-        echo "正在解压 $TMP_DIR/bitcomet.deb 到 $TMP_DIR/extracted ..." >> ${LOG_FILE}
-        if command -v dpkg-deb &> /dev/null; then
-            echo "使用 dpkg-deb 解压..." >> ${LOG_FILE}
-            dpkg-deb -x "$TMP_DIR/bitcomet.deb" "$TMP_DIR/extracted/"
-            echo "解压成功" >> ${LOG_FILE}
-        else
-            echo "解压失败" >> ${LOG_FILE}
-            exit 1
-        fi
-        #--- 提取bitcometd ---
-        BIN_DIR="${TRIM_APPDEST}/bin"
-        BITCOMETD_PATH=$(find "$TMP_DIR/extracted" -type f -name "bitcometd" -executable -print -quit)
-
-        if [ -n "$BITCOMETD_PATH" ]; then
-            mkdir -p "$BIN_DIR"
-            cp "$BITCOMETD_PATH" "$BIN_DIR/bitcometd"
-            log_msg "成功提取 bitcometd 到 $BIN_DIR/bitcometd"
-        else
-            log_msg "在 $TMP_DIR/extracted 及其子目录中未找到名为 'bitcometd' 的可执行文件。"
-            exit 1
-        fi
-
-        #--- 提取webui和ip2location文件夹 ---
-        WEBUI_PATH=$(find "$TMP_DIR/extracted" -type d -name "webui" -print -quit)
-
-        if [ -n "$WEBUI_PATH" ]; then
-            mkdir -p "$TRIM_APPDEST/share"
-            cp -r "$WEBUI_PATH" "$TRIM_APPDEST/share/webui"
-            log_msg "成功提取 webui 到 $TRIM_APPDEST/share/webui"
-        else
-            log_msg "在 $TMP_DIR/extracted 及其子目录中未找到名为 'webui' 的目录。"
-            exit 1
-        fi
-
-        IP_PATH=$(find "$TMP_DIR/extracted" -type d -name "ip2location" -print -quit)
-
-        if [ -n "$IP_PATH" ]; then
-            mkdir -p "$TRIM_APPDEST/share"
-            cp -r "$IP_PATH" "$TRIM_APPDEST/share/ip2location"
-            log_msg "成功提取 ip2location 到 $TRIM_APPDEST/share/ip2location"
-        else
-            log_msg "在 $TMP_DIR/extracted 及其子目录中未找到名为 'ip2location' 的目录。"
-            exit 1
-        fi
-
-        #--- 清空临时文件 ---
-        rm -rf ${TMP_DIR}
-
-        #--- 更新版本号记录文件 ---
-        echo "$FOUND_VERSION" > "$CURRENT_VERSION_FILE"
-        log_msg "版本号已更新至 $FOUND_VERSION"
-        log_msg "升级流程完成。"
-    elif [ $comparison_result -eq 0 ]; then
-        # FOUND_VERSION == CURRENT_VERSION
-        log_msg "找到的版本 $FOUND_VERSION 与当前版本相同，无需升级。"
-    elif [ $comparison_result -eq 2 ]; then
-        # FOUND_VERSION < CURRENT_VERSION
-        log_msg "找到的版本 $FOUND_VERSION 低于当前记录的版本 $CURRENT_VERSION。当前安装的版本更高或相同，跳过安装/升级。"
-    else
-        log_msg "版本比较出错。"
-        exit 1
-    fi
-
-elif [ "$bt_upgrade" = "off" ]; then
-    log_msg "升级检查关闭。跳过版本比对和安装/升级流程。"
-fi
-
-#--- 重置BitComet.xml ----
-if [ "$config_upgrade" = "on" ]; then
-    CONFIG_TEMPLATE="${TRIM_APPDEST}/template/BitComet.tpl"
-    CONFIG_FILE="${TRIM_DATA_SHARE_PATHS%%:*}/data/BitComet.xml"
-
-    sed \
-      -e "s|\${BT_USERNAME}|$bt_username|g" \
-      -e "s|\${BT_PASSWORD}|$bt_password|g" \
-      -e "s|\${BT_PORT}|$bt_port|g" \
-      "$CONFIG_TEMPLATE" > "$CONFIG_FILE"
-    echo "配置已成功重置" >> ${LOG_FILE}
-else
-    echo "配置重置已禁用，跳过 BitComet.xml生成。" >> ${LOG_FILE}
-fi
+sed \
+  -e "s|\${BT_USERNAME}|$bt_username|g" \
+  -e "s|\${BT_PASSWORD}|$bt_password|g" \
+  -e "s|\${BT_PORT}|$bt_port|g" \
+  "$CONFIG_TEMPLATE" > "$CONFIG_FILE"
+log_msg "配置已成功重置"
 
 exit 0
